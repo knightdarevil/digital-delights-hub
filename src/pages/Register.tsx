@@ -1,13 +1,19 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Download, Mail, Lock, Eye, EyeOff, User } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import ReCAPTCHA from "react-google-recaptcha";
 
 const Register = () => {
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [captchaVerified, setCaptchaVerified] = useState(false);
+  const recaptchaRef = useRef<ReCAPTCHA>(null);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -15,14 +21,67 @@ const Register = () => {
     confirmPassword: "",
   });
 
+  const { register } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.id]: e.target.value });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleCaptchaChange = (value: string | null) => {
+    setCaptchaVerified(!!value);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Will be implemented with Supabase auth
-    console.log("Register:", formData);
+
+    if (formData.password !== formData.confirmPassword) {
+      toast({
+        title: "Password Mismatch",
+        description: "Passwords do not match",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast({
+        title: "Weak Password",
+        description: "Password must be at least 6 characters",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!captchaVerified) {
+      toast({
+        title: "Verification Required",
+        description: "Please complete the reCAPTCHA verification",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await register(formData.email, formData.password, formData.name);
+      toast({
+        title: "Account Created!",
+        description: "Welcome! You now have 3 free downloads per week",
+      });
+      navigate("/profile");
+    } catch (error: any) {
+      toast({
+        title: "Registration Failed",
+        description: error.message || "Could not create account",
+        variant: "destructive",
+      });
+      recaptchaRef.current?.reset();
+      setCaptchaVerified(false);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -124,8 +183,18 @@ const Register = () => {
                 </span>
               </div>
 
-              <Button variant="hero" className="w-full" size="lg" type="submit">
-                Create Account
+              {/* reCAPTCHA */}
+              <div className="flex justify-center">
+                <ReCAPTCHA
+                  ref={recaptchaRef}
+                  sitekey="YOUR_RECAPTCHA_SITE_KEY"
+                  onChange={handleCaptchaChange}
+                  theme="dark"
+                />
+              </div>
+
+              <Button variant="hero" className="w-full" size="lg" type="submit" disabled={loading}>
+                {loading ? "Creating Account..." : "Create Account"}
               </Button>
             </form>
 

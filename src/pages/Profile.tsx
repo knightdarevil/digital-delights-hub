@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { 
@@ -9,23 +10,50 @@ import {
   Crown, 
   QrCode, 
   CreditCard,
-  Facebook,
   Clock
 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { VIP_LABELS } from "@/types/user";
 
 const Profile = () => {
-  // Mock user data - will be replaced with real data from Supabase
-  const user = {
-    name: "John Doe",
-    email: "john@example.com",
-    joinedDate: "January 2024",
-    plan: "Free",
-    downloadsThisWeek: 1,
-    maxDownloads: 3,
-    totalDownloads: 15,
+  const { userProfile, isVIP, remainingDownloads, loading } = useAuth();
+  const navigate = useNavigate();
+
+  if (loading) {
+    return (
+      <Layout>
+        <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!userProfile) {
+    navigate("/login");
+    return null;
+  }
+
+  const formatDate = (date: Date) => {
+    return new Intl.DateTimeFormat('en-US', { 
+      month: 'long', 
+      year: 'numeric' 
+    }).format(date);
   };
 
-  const isVIP = user.plan === "VIP";
+  const getDaysUntilReset = () => {
+    const weekStart = new Date(userProfile.weekStartDate);
+    const now = new Date();
+    const daysPassed = Math.floor((now.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.max(0, 7 - daysPassed);
+  };
+
+  const getVIPDaysRemaining = () => {
+    if (!userProfile.vipExpiresAt) return null;
+    const now = new Date();
+    const days = Math.ceil((userProfile.vipExpiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.max(0, days);
+  };
 
   return (
     <Layout>
@@ -41,15 +69,15 @@ const Profile = () => {
 
               {/* Info */}
               <div className="flex-1 text-center md:text-left">
-                <h1 className="text-2xl font-bold mb-2">{user.name}</h1>
+                <h1 className="text-2xl font-bold mb-2">{userProfile.displayName}</h1>
                 <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-muted-foreground text-sm">
                   <div className="flex items-center gap-1">
                     <Mail className="w-4 h-4" />
-                    <span>{user.email}</span>
+                    <span>{userProfile.email}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <Calendar className="w-4 h-4" />
-                    <span>Joined {user.joinedDate}</span>
+                    <span>Joined {formatDate(userProfile.createdAt)}</span>
                   </div>
                 </div>
               </div>
@@ -61,10 +89,25 @@ const Profile = () => {
                   : "bg-secondary text-secondary-foreground"
               }`}>
                 {isVIP ? <Crown className="w-4 h-4" /> : <Star className="w-4 h-4" />}
-                <span className="font-semibold">{user.plan} Plan</span>
+                <span className="font-semibold">{VIP_LABELS[userProfile.vipType]}</span>
               </div>
             </div>
           </div>
+
+          {/* VIP Status */}
+          {isVIP && userProfile.vipExpiresAt && (
+            <div className="content-card p-6 mb-8 border-yellow-500/30 bg-yellow-500/5">
+              <div className="flex items-center gap-3">
+                <Crown className="w-6 h-6 text-yellow-500" />
+                <div>
+                  <p className="font-semibold text-yellow-500">VIP Active</p>
+                  <p className="text-sm text-muted-foreground">
+                    {getVIPDaysRemaining()} days remaining
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -74,15 +117,15 @@ const Profile = () => {
                 <span className="text-muted-foreground text-sm">This Week</span>
               </div>
               <div className="text-3xl font-bold">
-                {user.downloadsThisWeek}
-                <span className="text-muted-foreground text-lg">/{user.maxDownloads}</span>
+                {userProfile.downloadsThisWeek}
+                {!isVIP && <span className="text-muted-foreground text-lg">/3</span>}
               </div>
               {!isVIP && (
                 <div className="mt-2">
                   <div className="h-2 bg-secondary rounded-full overflow-hidden">
                     <div 
                       className="h-full gradient-primary rounded-full transition-all"
-                      style={{ width: `${(user.downloadsThisWeek / user.maxDownloads) * 100}%` }}
+                      style={{ width: `${(userProfile.downloadsThisWeek / 3) * 100}%` }}
                     />
                   </div>
                 </div>
@@ -94,15 +137,19 @@ const Profile = () => {
                 <Download className="w-5 h-5 text-primary" />
                 <span className="text-muted-foreground text-sm">Total Downloads</span>
               </div>
-              <div className="text-3xl font-bold">{user.totalDownloads}</div>
+              <div className="text-3xl font-bold">{userProfile.totalDownloads}</div>
             </div>
 
             <div className="stat-card">
               <div className="flex items-center gap-3 mb-2">
                 <Clock className="w-5 h-5 text-primary" />
-                <span className="text-muted-foreground text-sm">Reset In</span>
+                <span className="text-muted-foreground text-sm">
+                  {isVIP ? "VIP Status" : "Reset In"}
+                </span>
               </div>
-              <div className="text-3xl font-bold">5 days</div>
+              <div className="text-3xl font-bold">
+                {isVIP ? (userProfile.vipType === 'vip_lifetime' ? '∞' : `${getVIPDaysRemaining()} days`) : `${getDaysUntilReset()} days`}
+              </div>
             </div>
           </div>
 
@@ -119,7 +166,26 @@ const Profile = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+              {/* VIP Plans */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="p-4 rounded-xl bg-secondary/50 border border-border text-center">
+                  <h3 className="font-semibold mb-1">VIP 7 Days</h3>
+                  <p className="text-2xl font-bold text-primary">50,000đ</p>
+                </div>
+                <div className="p-4 rounded-xl bg-secondary/50 border border-primary/50 text-center relative">
+                  <div className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-primary text-primary-foreground text-xs rounded-full">
+                    Popular
+                  </div>
+                  <h3 className="font-semibold mb-1">VIP 30 Days</h3>
+                  <p className="text-2xl font-bold text-primary">150,000đ</p>
+                </div>
+                <div className="p-4 rounded-xl bg-secondary/50 border border-border text-center">
+                  <h3 className="font-semibold mb-1">VIP Lifetime</h3>
+                  <p className="text-2xl font-bold text-primary">500,000đ</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* QR Code Option */}
                 <div className="p-6 rounded-xl bg-secondary/50 border border-border">
                   <div className="flex items-center gap-3 mb-4">
@@ -150,7 +216,7 @@ const Profile = () => {
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="text-primary">2.</span>
-                      Send it to our registered email
+                      Send it to: admin@downloadhub.com
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="text-primary">3.</span>
@@ -158,7 +224,6 @@ const Profile = () => {
                     </li>
                   </ul>
                   <Button variant="glass" className="w-full" size="sm">
-                    <Facebook className="w-4 h-4" />
                     Contact Admin on Facebook
                   </Button>
                 </div>
@@ -169,27 +234,6 @@ const Profile = () => {
               </p>
             </div>
           )}
-
-          {/* Recent Downloads */}
-          <div className="content-card p-8">
-            <h2 className="text-xl font-bold mb-6">Recent Downloads</h2>
-            <div className="space-y-4">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="flex items-center justify-between p-4 rounded-lg bg-secondary/50">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                      <Download className="w-5 h-5 text-primary" />
-                    </div>
-                    <div>
-                      <p className="font-medium">Sample Download {i}</p>
-                      <p className="text-sm text-muted-foreground">Downloaded 2 days ago</p>
-                    </div>
-                  </div>
-                  <span className="text-sm text-muted-foreground">1.2 GB</span>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </Layout>
