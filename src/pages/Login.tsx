@@ -1,20 +1,61 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Download, Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import ReCAPTCHA from "react-google-recaptcha";
 
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [captchaVerified, setCaptchaVerified] = useState(false);
+  const recaptchaRef = useRef<ReCAPTCHA>(null);
+  
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleCaptchaChange = (value: string | null) => {
+    setCaptchaVerified(!!value);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Will be implemented with Supabase auth
-    console.log("Login:", { email, password });
+    
+    if (!captchaVerified) {
+      toast({
+        title: "Verification Required",
+        description: "Please complete the reCAPTCHA verification",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await login(email, password);
+      toast({
+        title: "Welcome back!",
+        description: "You have successfully logged in",
+      });
+      navigate("/");
+    } catch (error: any) {
+      toast({
+        title: "Login Failed",
+        description: error.message || "Invalid email or password",
+        variant: "destructive",
+      });
+      recaptchaRef.current?.reset();
+      setCaptchaVerified(false);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -84,8 +125,18 @@ const Login = () => {
                 </Link>
               </div>
 
-              <Button variant="hero" className="w-full" size="lg" type="submit">
-                Sign In
+              {/* reCAPTCHA */}
+              <div className="flex justify-center">
+                <ReCAPTCHA
+                  ref={recaptchaRef}
+                  sitekey="YOUR_RECAPTCHA_SITE_KEY"
+                  onChange={handleCaptchaChange}
+                  theme="dark"
+                />
+              </div>
+
+              <Button variant="hero" className="w-full" size="lg" type="submit" disabled={loading}>
+                {loading ? "Signing in..." : "Sign In"}
               </Button>
             </form>
 
