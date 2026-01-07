@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { contentService } from "@/services/contentService";
+import { driveSyncService } from "@/services/driveSyncService";
+import { googleDriveService } from "@/services/googleDriveService";
 import { ContentItem } from "@/types/user";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,16 +29,23 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Search, Eye, Download } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Eye, Download, RefreshCw, Link } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export const AdminContent = () => {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isSyncDialogOpen, setIsSyncDialogOpen] = useState(false);
   const [editingContent, setEditingContent] = useState<ContentItem | null>(null);
   const { toast } = useToast();
+
+  const [syncData, setSyncData] = useState({
+    driveUrl: "",
+    category: "windows" as ContentItem["category"],
+  });
 
   const [formData, setFormData] = useState({
     title: "",
@@ -139,6 +148,60 @@ export const AdminContent = () => {
     });
   };
 
+  // Sync from Google Drive URL
+  const handleSyncFromUrl = async () => {
+    if (!syncData.driveUrl) {
+      toast({
+        title: "Error",
+        description: "Please enter a Google Drive URL",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const result = await driveSyncService.syncFileFromUrl(
+        syncData.driveUrl,
+        syncData.category
+      );
+
+      if (result.success) {
+        toast({ title: "Sync Success", description: result.message });
+        setIsSyncDialogOpen(false);
+        setSyncData({ driveUrl: "", category: "windows" });
+        fetchContents();
+      } else {
+        toast({
+          title: "Sync Failed",
+          description: result.message,
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to sync from Google Drive",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Auto-convert Google Drive links when pasting
+  const handleDownloadLinkChange = (url: string) => {
+    const fileId = googleDriveService.parseFileId(url);
+    if (fileId) {
+      setFormData({
+        ...formData,
+        downloadLink: googleDriveService.getDirectDownloadLink(fileId),
+      });
+    } else {
+      setFormData({ ...formData, downloadLink: url });
+    }
+  };
+
   const filteredContents = contents.filter(
     (content) =>
       content.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -167,6 +230,63 @@ export const AdminContent = () => {
           />
         </div>
         
+        {/* Sync from Google Drive Dialog */}
+        <Dialog open={isSyncDialogOpen} onOpenChange={setIsSyncDialogOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline">
+              <Link className="w-4 h-4 mr-2" />
+              Sync từ Drive
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Sync từ Google Drive</DialogTitle>
+            </DialogHeader>
+            
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Google Drive URL</Label>
+                <Input
+                  value={syncData.driveUrl}
+                  onChange={(e) => setSyncData({ ...syncData, driveUrl: e.target.value })}
+                  placeholder="https://drive.google.com/file/d/..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Category</Label>
+                <Select
+                  value={syncData.category}
+                  onValueChange={(value: ContentItem["category"]) =>
+                    setSyncData({ ...syncData, category: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="windows">Windows</SelectItem>
+                    <SelectItem value="driver">Driver</SelectItem>
+                    <SelectItem value="software">Software</SelectItem>
+                    <SelectItem value="courses">Courses</SelectItem>
+                    <SelectItem value="movies">Movies</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setIsSyncDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSyncFromUrl} disabled={syncing}>
+                  {syncing && <RefreshCw className="w-4 h-4 mr-2 animate-spin" />}
+                  {syncing ? "Syncing..." : "Sync"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
           if (!open) resetForm();
@@ -251,8 +371,8 @@ export const AdminContent = () => {
                 <Input
                   id="downloadLink"
                   value={formData.downloadLink}
-                  onChange={(e) => setFormData({ ...formData, downloadLink: e.target.value })}
-                  placeholder="https://drive.google.com/..."
+                  onChange={(e) => handleDownloadLinkChange(e.target.value)}
+                  placeholder="https://drive.google.com/... (auto-converts to direct link)"
                   required
                 />
               </div>

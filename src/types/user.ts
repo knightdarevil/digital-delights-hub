@@ -27,6 +27,7 @@ export interface ContentItem {
   views: number;
   downloads: number;
   quality?: '720p' | '1080p' | '4K';
+  driveFileId?: string; // Google Drive file ID for sync
   createdAt: Date;
   updatedAt: Date;
 }
