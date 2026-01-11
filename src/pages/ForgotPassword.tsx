@@ -116,9 +116,9 @@ const ForgotPassword = () => {
 
               {/* reCAPTCHA */}
               <div className="flex justify-center">
-                <ReCAPTCHA
+              <ReCAPTCHA
                   ref={recaptchaRef}
-                  sitekey="YOUR_RECAPTCHA_SITE_KEY"
+                  sitekey="6Ld8BEYsAAAAABQyYfoV_co7b0CfasDvwMjrR8gf"
                   onChange={handleCaptchaChange}
                   theme="dark"
                 />
