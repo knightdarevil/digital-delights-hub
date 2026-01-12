@@ -148,7 +148,7 @@ export const AdminContent = () => {
     });
   };
 
-  // Sync from Google Drive URL
+  // Sync from Google Drive URL (supports both file and folder URLs)
   const handleSyncFromUrl = async () => {
     if (!syncData.driveUrl) {
       toast({
@@ -161,7 +161,8 @@ export const AdminContent = () => {
 
     setSyncing(true);
     try {
-      const result = await driveSyncService.syncFileFromUrl(
+      // Use smart sync that auto-detects file vs folder
+      const result = await driveSyncService.syncFromUrl(
         syncData.driveUrl,
         syncData.category
       );
@@ -249,7 +250,7 @@ export const AdminContent = () => {
                 <Input
                   value={syncData.driveUrl}
                   onChange={(e) => setSyncData({ ...syncData, driveUrl: e.target.value })}
-                  placeholder="https://drive.google.com/file/d/..."
+                  placeholder="https://drive.google.com/drive/folders/... hoặc /file/d/..."
                 />
               </div>
 

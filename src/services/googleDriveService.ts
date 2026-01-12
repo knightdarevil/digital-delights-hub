@@ -165,4 +165,26 @@ export const googleDriveService = {
 
     return null;
   },
+
+  // Parse folder ID from various Google Drive folder URL formats
+  parseFolderId(url: string): string | null {
+    // Format: https://drive.google.com/drive/folders/FOLDER_ID
+    let match = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+
+    // Format: https://drive.google.com/drive/u/0/folders/FOLDER_ID
+    match = url.match(/\/drive\/u\/\d+\/folders\/([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+
+    // Format: https://drive.google.com/open?id=FOLDER_ID
+    match = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+
+    // Already a folder ID (just an ID string)
+    if (/^[a-zA-Z0-9_-]+$/.test(url) && url.length > 20) {
+      return url;
+    }
+
+    return null;
+  },
 };

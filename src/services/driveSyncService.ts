@@ -127,4 +127,47 @@ export const driveSyncService = {
       return { success: false, message: `Error: ${error}` };
     }
   },
+
+  // Sync folder from URL - syncs all files in a Google Drive folder
+  async syncFolderFromUrl(url: string, category: string, apiKey?: string): Promise<{ success: boolean; message: string; added: number; updated: number }> {
+    const folderId = googleDriveService.parseFolderId(url);
+    
+    if (!folderId) {
+      return { success: false, message: 'Invalid Google Drive folder URL', added: 0, updated: 0 };
+    }
+
+    try {
+      const result = await this.syncFolder(folderId, category, apiKey);
+      
+      if (result.errors.length > 0) {
+        return { 
+          success: result.added > 0 || result.updated > 0, 
+          message: `Synced with ${result.errors.length} errors: ${result.errors[0]}`,
+          added: result.added,
+          updated: result.updated
+        };
+      }
+      
+      return { 
+        success: true, 
+        message: `Successfully synced ${result.added} new and ${result.updated} updated files`,
+        added: result.added,
+        updated: result.updated
+      };
+    } catch (error) {
+      return { success: false, message: `Error: ${error}`, added: 0, updated: 0 };
+    }
+  },
+
+  // Smart sync - auto-detect if URL is file or folder
+  async syncFromUrl(url: string, category: string, apiKey?: string): Promise<{ success: boolean; message: string }> {
+    // Check if it's a folder URL first
+    if (url.includes('/folders/') || url.includes('/drive/folders')) {
+      const result = await this.syncFolderFromUrl(url, category, apiKey);
+      return { success: result.success, message: result.message };
+    }
+    
+    // Otherwise try as file
+    return this.syncFileFromUrl(url, category, apiKey);
+  },
 };
