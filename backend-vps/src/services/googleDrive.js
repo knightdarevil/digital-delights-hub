@@ -8,9 +8,17 @@ class GoogleDriveService {
 
   init() {
     try {
-      // Parse Service Account credentials from environment
-      const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
-      
+      const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+      const rawB64 = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_BASE64;
+
+      if (!raw && !rawB64) {
+        throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_KEY (or GOOGLE_SERVICE_ACCOUNT_KEY_BASE64)');
+      }
+
+      // Support either JSON string OR base64(JSON)
+      const jsonText = rawB64 ? Buffer.from(rawB64, 'base64').toString('utf8') : raw;
+      const credentials = JSON.parse(jsonText);
+
       const auth = new google.auth.GoogleAuth({
         credentials,
         scopes: ['https://www.googleapis.com/auth/drive.readonly']
@@ -34,7 +42,9 @@ class GoogleDriveService {
       fields: 'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink, thumbnailLink)',
       pageSize: 100,
       pageToken,
-      orderBy: 'createdTime desc'
+      orderBy: 'createdTime desc',
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true
     });
 
     return {
