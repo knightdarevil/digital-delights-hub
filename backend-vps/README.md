@@ -43,8 +43,11 @@ PORT=3001
 FRONTEND_URL=https://your-frontend.com
 JWT_SECRET=generate-a-strong-secret-here
 
-# Paste toàn bộ nội dung file JSON Service Account vào 1 dòng
-GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
+# Option A (recommended): base64(JSON)
+GOOGLE_SERVICE_ACCOUNT_KEY_BASE64=base64_of_service_account_json
+
+# Option B: JSON 1 dòng
+# GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 
 # Folder IDs từ URL Google Drive
 # https://drive.google.com/drive/folders/ABC123 → ID là ABC123
@@ -71,7 +74,8 @@ npm start
 
 ### Public
 - `GET /health` - Health check
-- `GET /api/drive/list/:category` - Liệt kê files theo category
+- `GET /api/drive/list/:category` - Liệt kê files theo category (map từ env)
+- `GET /api/drive/list-folder/:folderId` - Liệt kê files theo folderId (Service Account)
 - `GET /api/drive/file/:fileId` - Lấy thông tin file
 
 ### Protected (cần JWT token)
@@ -119,19 +123,29 @@ docker run -d -p 3001:3001 --env-file .env gdrive-backend
 
 ## Tích hợp với Frontend
 
-Cập nhật frontend để gọi API backend thay vì gọi trực tiếp Google Drive API.
+### 1) Cấu hình frontend gọi về VPS (khuyến nghị)
 
-```typescript
+Thêm vào `.env` của frontend:
+
+```env
+VITE_VPS_BACKEND_URL=https://your-vps-domain.com
+```
+
+Khi có biến này, admin sync sẽ dùng VPS (Service Account) để đọc folder private thay vì dùng API key.
+
+### 2) Ví dụ gọi API trực tiếp
+
+```ts
 const BACKEND_URL = 'https://your-vps-domain.com';
 
-// List files
-const response = await fetch(`${BACKEND_URL}/api/drive/list/movies`);
+// List files by folderId
+const response = await fetch(`${BACKEND_URL}/api/drive/list-folder/${folderId}`);
 const data = await response.json();
 
-// Download (cần token)
+// Download (cần token nếu bạn dùng endpoint /download)
 const downloadResponse = await fetch(`${BACKEND_URL}/api/drive/download/${fileId}`, {
   headers: {
-    'Authorization': `Bearer ${userToken}`
+    Authorization: `Bearer ${userToken}`
   }
 });
 ```

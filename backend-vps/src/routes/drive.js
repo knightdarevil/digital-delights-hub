@@ -12,20 +12,38 @@ const FOLDER_MAPPING = {
   driver: process.env.DRIVE_FOLDER_DRIVER
 };
 
+// List files by raw folderId (public) - used by frontend sync via Service Account
+router.get('/list-folder/:folderId', async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    const { pageToken } = req.query;
+
+    const result = await driveService.listFiles(folderId, pageToken);
+
+    res.json({
+      files: result.files || [],
+      nextPageToken: result.nextPageToken
+    });
+  } catch (error) {
+    console.error('List folder files error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // List files in a category folder
 router.get('/list/:category', async (req, res) => {
   try {
     const { category } = req.params;
     const { pageToken } = req.query;
-    
+
     const folderId = FOLDER_MAPPING[category];
     if (!folderId) {
       return res.status(400).json({ error: 'Invalid category' });
     }
 
     const result = await driveService.listFiles(folderId, pageToken);
-    
-    const items = result.files.map(file => 
+
+    const items = result.files.map(file =>
       driveService.convertToContentItem(file, category)
     );
 
