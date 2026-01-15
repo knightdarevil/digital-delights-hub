@@ -1,7 +1,7 @@
 // Google Drive to Firebase Sync Service
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { googleDriveService, DRIVE_FOLDER_MAPPING, DriveFile } from './googleDriveService';
+import { googleDriveService, DriveFile } from './googleDriveService';
 import { ContentItem } from '@/types/user';
 
 const CONTENTS_COLLECTION = 'contents';
@@ -14,12 +14,15 @@ export interface SyncResult {
 
 export const driveSyncService = {
   // Sync a single folder to Firebase
-  async syncFolder(folderId: string, category: string, apiKey?: string): Promise<SyncResult> {
+  async syncFolder(folderId: string, category: string): Promise<SyncResult> {
     const result: SyncResult = { added: 0, updated: 0, errors: [] };
 
     try {
-      // Get files from Google Drive
-      const driveFiles = await googleDriveService.listFiles(folderId, apiKey);
+      console.log(`🔄 Syncing folder ${folderId} to category ${category}`);
+      
+      // Get files from Google Drive via VPS backend
+      const driveFiles = await googleDriveService.listFiles(folderId);
+      console.log(`📁 Found ${driveFiles.length} files in Drive folder`);
       
       // Get existing content from Firebase for this category
       const existingQuery = query(
@@ -29,12 +32,14 @@ export const driveSyncService = {
       const existingSnapshot = await getDocs(existingQuery);
       const existingByDriveId = new Map<string, { id: string; data: ContentItem }>();
       
-      existingSnapshot.docs.forEach(doc => {
-        const data = doc.data() as ContentItem;
+      existingSnapshot.docs.forEach(docSnap => {
+        const data = docSnap.data() as ContentItem;
         if (data.driveFileId) {
-          existingByDriveId.set(data.driveFileId, { id: doc.id, data });
+          existingByDriveId.set(data.driveFileId, { id: docSnap.id, data });
         }
       });
+
+      console.log(`📊 Found ${existingByDriveId.size} existing items in Firebase`);
 
       // Process each Drive file
       for (const driveFile of driveFiles) {
@@ -49,6 +54,7 @@ export const driveSyncService = {
               updatedAt: serverTimestamp(),
             });
             result.updated++;
+            console.log(`✏️ Updated: ${contentData.title}`);
           } else {
             // Add new content
             await addDoc(collection(db, CONTENTS_COLLECTION), {
@@ -59,32 +65,27 @@ export const driveSyncService = {
               updatedAt: serverTimestamp(),
             });
             result.added++;
+            console.log(`➕ Added: ${contentData.title}`);
           }
         } catch (error) {
-          result.errors.push(`Error processing ${driveFile.name}: ${error}`);
+          const errorMsg = `Error processing ${driveFile.name}: ${error}`;
+          result.errors.push(errorMsg);
+          console.error(`❌ ${errorMsg}`);
         }
       }
+      
+      console.log(`✅ Sync complete: ${result.added} added, ${result.updated} updated, ${result.errors.length} errors`);
     } catch (error) {
-      result.errors.push(`Error syncing folder ${folderId}: ${error}`);
+      const errorMsg = `Error syncing folder ${folderId}: ${error}`;
+      result.errors.push(errorMsg);
+      console.error(`❌ ${errorMsg}`);
     }
 
     return result;
   },
 
-  // Sync all configured folders
-  async syncAllFolders(apiKey?: string): Promise<Record<string, SyncResult>> {
-    const results: Record<string, SyncResult> = {};
-
-    for (const [folderId, category] of Object.entries(DRIVE_FOLDER_MAPPING)) {
-      if (folderId.startsWith('YOUR_')) continue; // Skip placeholder IDs
-      results[category] = await this.syncFolder(folderId, category, apiKey);
-    }
-
-    return results;
-  },
-
   // Sync single file from URL
-  async syncFileFromUrl(url: string, category: string, apiKey?: string): Promise<{ success: boolean; message: string; contentId?: string }> {
+  async syncFileFromUrl(url: string, category: string): Promise<{ success: boolean; message: string; contentId?: string }> {
     const fileId = googleDriveService.parseFileId(url);
     
     if (!fileId) {
@@ -92,8 +93,10 @@ export const driveSyncService = {
     }
 
     try {
+      console.log(`🔄 Syncing file ${fileId} to category ${category}`);
+      
       // Get file details from Google Drive
-      const driveFile = await googleDriveService.getFile(fileId, apiKey);
+      const driveFile = await googleDriveService.getFile(fileId);
       
       // Check if already exists
       const existingQuery = query(
@@ -111,6 +114,7 @@ export const driveSyncService = {
           ...contentData,
           updatedAt: serverTimestamp(),
         });
+        console.log(`✏️ Updated existing file: ${contentData.title}`);
         return { success: true, message: 'Content updated successfully', contentId: existingDoc.id };
       } else {
         // Add new
@@ -121,15 +125,17 @@ export const driveSyncService = {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        console.log(`➕ Added new file: ${contentData.title}`);
         return { success: true, message: 'Content added successfully', contentId: docRef.id };
       }
     } catch (error) {
+      console.error(`❌ Error syncing file:`, error);
       return { success: false, message: `Error: ${error}` };
     }
   },
 
   // Sync folder from URL - syncs all files in a Google Drive folder
-  async syncFolderFromUrl(url: string, category: string, apiKey?: string): Promise<{ success: boolean; message: string; added: number; updated: number }> {
+  async syncFolderFromUrl(url: string, category: string): Promise<{ success: boolean; message: string; added: number; updated: number }> {
     const folderId = googleDriveService.parseFolderId(url);
     
     if (!folderId) {
@@ -137,7 +143,8 @@ export const driveSyncService = {
     }
 
     try {
-      const result = await this.syncFolder(folderId, category, apiKey);
+      console.log(`🔄 Syncing folder from URL: ${url}`);
+      const result = await this.syncFolder(folderId, category);
       
       if (result.errors.length > 0) {
         return { 
@@ -155,19 +162,24 @@ export const driveSyncService = {
         updated: result.updated
       };
     } catch (error) {
+      console.error(`❌ Error syncing folder:`, error);
       return { success: false, message: `Error: ${error}`, added: 0, updated: 0 };
     }
   },
 
   // Smart sync - auto-detect if URL is file or folder
-  async syncFromUrl(url: string, category: string, apiKey?: string): Promise<{ success: boolean; message: string }> {
+  async syncFromUrl(url: string, category: string): Promise<{ success: boolean; message: string }> {
+    console.log(`🔍 Auto-detecting URL type: ${url}`);
+    
     // Check if it's a folder URL first
     if (url.includes('/folders/') || url.includes('/drive/folders')) {
-      const result = await this.syncFolderFromUrl(url, category, apiKey);
+      console.log(`📁 Detected folder URL`);
+      const result = await this.syncFolderFromUrl(url, category);
       return { success: result.success, message: result.message };
     }
     
     // Otherwise try as file
-    return this.syncFileFromUrl(url, category, apiKey);
+    console.log(`📄 Detected file URL`);
+    return this.syncFileFromUrl(url, category);
   },
 };

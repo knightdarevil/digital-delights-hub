@@ -1,5 +1,5 @@
 // Google Drive API Service
-// Requires: GOOGLE_DRIVE_API_KEY in environment or Firebase config
+// Uses VPS Backend with Service Account for private folders
 
 const GOOGLE_DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 
@@ -25,7 +25,6 @@ export interface DriveFolder {
 
 // Category mapping - Map Google Drive folder IDs to content categories
 export const DRIVE_FOLDER_MAPPING: Record<string, string> = {
-  // Replace these with your actual Google Drive folder IDs
   'YOUR_MOVIES_FOLDER_ID': 'movies',
   'YOUR_SOFTWARE_FOLDER_ID': 'software',
   'YOUR_WINDOWS_FOLDER_ID': 'windows',
@@ -42,33 +41,48 @@ export const googleDriveService = {
     return (import.meta.env.VITE_VPS_BACKEND_URL || '').replace(/\/+$/, '');
   },
 
-  // List files in a folder
+  // List files in a folder - Always uses VPS backend if configured
   async listFiles(folderId: string, apiKey?: string): Promise<DriveFile[]> {
     const backendUrl = this.getBackendUrl();
+    
     if (backendUrl) {
+      console.log('📡 Using VPS backend:', backendUrl);
       const url = `${backendUrl}/api/drive/list-folder/${encodeURIComponent(folderId)}`;
-      const response = await fetch(url);
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.error || error?.message || 'Failed to fetch files from backend');
+      
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(errorData.error || `Backend error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('✅ Fetched files from backend:', data.files?.length || 0);
+        return data.files || [];
+      } catch (error) {
+        console.error('❌ Backend fetch error:', error);
+        throw error;
       }
-      const data = await response.json();
-      return data.files || data.items || [];
     }
 
-    // Fallback (public folders only)
+    // Fallback to direct Google API (only works for public folders)
+    console.log('📡 Using direct Google Drive API (fallback)');
     const key = apiKey || this.getApiKey();
     if (!key) {
-      throw new Error('Google Drive API key not configured');
+      throw new Error('Google Drive API key not configured and no VPS backend available');
     }
 
     const query = `'${folderId}' in parents and trashed = false`;
     const fields = 'files(id,name,mimeType,size,webContentLink,webViewLink,thumbnailLink,createdTime,modifiedTime,description)';
-
     const url = `${GOOGLE_DRIVE_API_BASE}/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent(fields)}&key=${key}&orderBy=createdTime desc`;
 
     const response = await fetch(url);
-
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error?.message || 'Failed to fetch files from Google Drive');
@@ -81,17 +95,20 @@ export const googleDriveService = {
   // Get file details
   async getFile(fileId: string, apiKey?: string): Promise<DriveFile> {
     const backendUrl = this.getBackendUrl();
+    
     if (backendUrl) {
       const url = `${backendUrl}/api/drive/file/${encodeURIComponent(fileId)}`;
       const response = await fetch(url);
+      
       if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.error || error?.message || 'Failed to fetch file from backend');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `Backend error: ${response.status}`);
       }
+      
       return response.json();
     }
 
-    // Fallback (public files only)
+    // Fallback to direct Google API
     const key = apiKey || this.getApiKey();
     if (!key) {
       throw new Error('Google Drive API key not configured');
@@ -101,7 +118,6 @@ export const googleDriveService = {
     const url = `${GOOGLE_DRIVE_API_BASE}/files/${fileId}?fields=${encodeURIComponent(fields)}&key=${key}`;
 
     const response = await fetch(url);
-
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error?.message || 'Failed to fetch file from Google Drive');
