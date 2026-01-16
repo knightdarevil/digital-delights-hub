@@ -4,13 +4,13 @@ const driveService = require('../services/googleDrive');
 const { verifyToken, checkDownloadLimit } = require('../middleware/auth');
 
 // Folder ID mapping from environment
-const FOLDER_MAPPING = {
-  movies: process.env.DRIVE_FOLDER_MOVIES,
-  software: process.env.DRIVE_FOLDER_SOFTWARE,
-  courses: process.env.DRIVE_FOLDER_COURSES,
-  windows: process.env.DRIVE_FOLDER_WINDOWS,
-  driver: process.env.DRIVE_FOLDER_DRIVER
-};
+const getFolderMapping = () => ({
+  movies: process.env.DRIVE_FOLDER_MOVIES || '',
+  software: process.env.DRIVE_FOLDER_SOFTWARE || '',
+  courses: process.env.DRIVE_FOLDER_COURSES || '',
+  windows: process.env.DRIVE_FOLDER_WINDOWS || '',
+  driver: process.env.DRIVE_FOLDER_DRIVER || ''
+});
 
 // ============ PUBLIC ENDPOINTS ============
 
@@ -20,17 +20,27 @@ router.get('/list-folder/:folderId', async (req, res) => {
     const { folderId } = req.params;
     const { pageToken } = req.query;
 
+    if (!folderId || folderId === 'undefined') {
+      return res.status(400).json({ error: 'Invalid folder ID' });
+    }
+
     console.log(`📂 Request to list folder: ${folderId}`);
     
-    const result = await driveService.listFiles(folderId, pageToken);
+    const result = await driveService.listFiles(folderId, pageToken || null);
 
     res.json({
+      success: true,
       files: result.files || [],
-      nextPageToken: result.nextPageToken
+      nextPageToken: result.nextPageToken || null,
+      count: result.files?.length || 0
     });
   } catch (error) {
     console.error('❌ List folder files error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
+      files: [] 
+    });
   }
 });
 
@@ -39,27 +49,38 @@ router.get('/list/:category', async (req, res) => {
   try {
     const { category } = req.params;
     const { pageToken } = req.query;
-
-    const folderId = FOLDER_MAPPING[category];
+    
+    const folderMapping = getFolderMapping();
+    const folderId = folderMapping[category];
+    
     if (!folderId) {
-      return res.status(400).json({ error: `Invalid category: ${category}` });
+      return res.status(400).json({ 
+        error: `Invalid or unconfigured category: ${category}`,
+        validCategories: Object.keys(folderMapping).filter(k => folderMapping[k])
+      });
     }
 
     console.log(`📂 Request to list category: ${category} (folder: ${folderId})`);
     
-    const result = await driveService.listFiles(folderId, pageToken);
+    const result = await driveService.listFiles(folderId, pageToken || null);
 
-    const items = result.files.map(file =>
+    const items = (result.files || []).map(file =>
       driveService.convertToContentItem(file, category)
     );
 
     res.json({
+      success: true,
       items,
-      nextPageToken: result.nextPageToken
+      nextPageToken: result.nextPageToken || null,
+      count: items.length
     });
   } catch (error) {
     console.error('❌ List files error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message,
+      items: [] 
+    });
   }
 });
 
@@ -67,13 +88,24 @@ router.get('/list/:category', async (req, res) => {
 router.get('/file/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
+    
+    if (!fileId || fileId === 'undefined') {
+      return res.status(400).json({ error: 'Invalid file ID' });
+    }
+    
     console.log(`📄 Request to get file: ${fileId}`);
     
     const file = await driveService.getFile(fileId);
-    res.json(file);
+    res.json({
+      success: true,
+      ...file
+    });
   } catch (error) {
     console.error('❌ Get file error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
   }
 });
 
@@ -83,10 +115,14 @@ router.get('/file/:fileId', async (req, res) => {
 router.post('/sync/:category', verifyToken, async (req, res) => {
   try {
     const { category } = req.params;
-    const folderId = FOLDER_MAPPING[category];
+    const folderMapping = getFolderMapping();
+    const folderId = folderMapping[category];
     
     if (!folderId) {
-      return res.status(400).json({ error: `Invalid category: ${category}` });
+      return res.status(400).json({ 
+        success: false,
+        error: `Invalid or unconfigured category: ${category}` 
+      });
     }
 
     console.log(`🔄 Syncing category: ${category}`);
@@ -96,7 +132,7 @@ router.post('/sync/:category', verifyToken, async (req, res) => {
 
     do {
       const result = await driveService.listFiles(folderId, pageToken);
-      allFiles = allFiles.concat(result.files);
+      allFiles = allFiles.concat(result.files || []);
       pageToken = result.nextPageToken;
     } while (pageToken);
 
@@ -113,7 +149,10 @@ router.post('/sync/:category', verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Sync error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
   }
 });
 
@@ -122,10 +161,20 @@ router.post('/sync-url', verifyToken, async (req, res) => {
   try {
     const { url, category } = req.body;
     
+    if (!url || !category) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Missing url or category in request body' 
+      });
+    }
+    
     // Extract folder ID from URL
     const folderIdMatch = url.match(/folders\/([a-zA-Z0-9_-]+)/);
     if (!folderIdMatch) {
-      return res.status(400).json({ error: 'Invalid Google Drive folder URL' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid Google Drive folder URL. Expected format: https://drive.google.com/drive/folders/FOLDER_ID' 
+      });
     }
 
     const folderId = folderIdMatch[1];
@@ -136,7 +185,7 @@ router.post('/sync-url', verifyToken, async (req, res) => {
 
     do {
       const result = await driveService.listFiles(folderId, pageToken);
-      allFiles = allFiles.concat(result.files);
+      allFiles = allFiles.concat(result.files || []);
       pageToken = result.nextPageToken;
     } while (pageToken);
 
@@ -153,7 +202,10 @@ router.post('/sync-url', verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Sync URL error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
   }
 });
 
@@ -161,6 +213,11 @@ router.post('/sync-url', verifyToken, async (req, res) => {
 router.get('/download/:fileId', verifyToken, checkDownloadLimit, async (req, res) => {
   try {
     const { fileId } = req.params;
+    
+    if (!fileId || fileId === 'undefined') {
+      return res.status(400).json({ error: 'Invalid file ID' });
+    }
+    
     console.log(`⬇️ Download request for file: ${fileId}`);
     
     // Get file info first
@@ -175,11 +232,21 @@ router.get('/download/:fileId', verifyToken, checkDownloadLimit, async (req, res
 
     // Stream file to response
     const stream = await driveService.getFileStream(fileId);
+    
+    stream.on('error', (error) => {
+      console.error('❌ Stream error:', error.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Download failed' });
+      }
+    });
+    
     stream.pipe(res);
     
   } catch (error) {
     console.error('❌ Download error:', error.message);
-    res.status(500).json({ error: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 
