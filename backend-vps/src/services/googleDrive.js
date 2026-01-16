@@ -3,16 +3,20 @@ const { google } = require('googleapis');
 class GoogleDriveService {
   constructor() {
     this.drive = null;
-    this.init();
+    this.initialized = false;
+    this.initError = null;
   }
 
   init() {
+    if (this.initialized) return;
+    
     try {
       const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
       const rawB64 = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_BASE64;
 
       if (!raw && !rawB64) {
-        console.error('❌ Missing GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_SERVICE_ACCOUNT_KEY_BASE64');
+        this.initError = 'Missing GOOGLE_SERVICE_ACCOUNT_KEY or GOOGLE_SERVICE_ACCOUNT_KEY_BASE64';
+        console.error('❌ ' + this.initError);
         console.error('Please set one of these environment variables with your Service Account JSON');
         return;
       }
@@ -27,8 +31,23 @@ class GoogleDriveService {
         jsonText = raw;
       }
       
-      const credentials = JSON.parse(jsonText);
+      let credentials;
+      try {
+        credentials = JSON.parse(jsonText);
+      } catch (parseError) {
+        this.initError = 'Invalid JSON in service account key: ' + parseError.message;
+        console.error('❌ ' + this.initError);
+        return;
+      }
+      
+      if (!credentials.client_email || !credentials.private_key) {
+        this.initError = 'Service account key missing required fields (client_email or private_key)';
+        console.error('❌ ' + this.initError);
+        return;
+      }
+      
       console.log(`📧 Service Account Email: ${credentials.client_email}`);
+      console.log('💡 Make sure to share your Google Drive folders with this email!');
 
       const auth = new google.auth.GoogleAuth({
         credentials,
@@ -36,18 +55,28 @@ class GoogleDriveService {
       });
 
       this.drive = google.drive({ version: 'v3', auth });
+      this.initialized = true;
       console.log('✅ Google Drive Service initialized successfully');
     } catch (error) {
-      console.error('❌ Failed to initialize Google Drive:', error.message);
+      this.initError = 'Failed to initialize Google Drive: ' + error.message;
+      console.error('❌ ' + this.initError);
       console.error('Stack:', error.stack);
+    }
+  }
+
+  ensureInitialized() {
+    if (!this.initialized) {
+      this.init();
+    }
+    
+    if (!this.drive) {
+      throw new Error(this.initError || 'Google Drive not initialized. Check your GOOGLE_SERVICE_ACCOUNT_KEY.');
     }
   }
 
   // List files in a folder
   async listFiles(folderId, pageToken = null) {
-    if (!this.drive) {
-      throw new Error('Google Drive not initialized. Check your GOOGLE_SERVICE_ACCOUNT_KEY.');
-    }
+    this.ensureInitialized();
 
     console.log(`📂 Listing files in folder: ${folderId}`);
     
@@ -62,20 +91,24 @@ class GoogleDriveService {
         supportsAllDrives: true
       });
 
-      console.log(`✅ Found ${response.data.files?.length || 0} files`);
+      const files = response.data.files || [];
+      console.log(`✅ Found ${files.length} files`);
       
       return {
-        files: response.data.files || [],
+        files,
         nextPageToken: response.data.nextPageToken
       };
     } catch (error) {
       console.error(`❌ Error listing files:`, error.message);
       
       if (error.code === 404) {
-        throw new Error(`Folder not found: ${folderId}. Make sure the folder is shared with the Service Account.`);
+        throw new Error(`Folder not found: ${folderId}. Make sure the folder ID is correct.`);
       }
       if (error.code === 403) {
         throw new Error(`Access denied to folder: ${folderId}. Make sure the folder is shared with the Service Account email.`);
+      }
+      if (error.code === 400) {
+        throw new Error(`Invalid folder ID: ${folderId}. Please check the folder ID format.`);
       }
       
       throw error;
@@ -84,9 +117,7 @@ class GoogleDriveService {
 
   // Get single file details
   async getFile(fileId) {
-    if (!this.drive) {
-      throw new Error('Google Drive not initialized');
-    }
+    this.ensureInitialized();
 
     console.log(`📄 Getting file details: ${fileId}`);
     
@@ -101,16 +132,24 @@ class GoogleDriveService {
       return response.data;
     } catch (error) {
       console.error(`❌ Error getting file:`, error.message);
+      
+      if (error.code === 404) {
+        throw new Error(`File not found: ${fileId}`);
+      }
+      if (error.code === 403) {
+        throw new Error(`Access denied to file: ${fileId}. Make sure it's shared with the Service Account.`);
+      }
+      
       throw error;
     }
   }
 
   // Get file stream for download
   async getFileStream(fileId) {
-    if (!this.drive) {
-      throw new Error('Google Drive not initialized');
-    }
+    this.ensureInitialized();
 
+    console.log(`⬇️ Getting file stream: ${fileId}`);
+    
     const response = await this.drive.files.get(
       { fileId, alt: 'media', supportsAllDrives: true },
       { responseType: 'stream' }
@@ -121,9 +160,7 @@ class GoogleDriveService {
 
   // Get file metadata and download URL
   async getDownloadInfo(fileId) {
-    if (!this.drive) {
-      throw new Error('Google Drive not initialized');
-    }
+    this.ensureInitialized();
 
     const file = await this.getFile(fileId);
     
@@ -150,17 +187,28 @@ class GoogleDriveService {
       formattedSize = sizeInBytes + ' bytes';
     }
 
-    // Determine type based on mimeType
+    // Determine type based on mimeType or file extension
     let type = 'file';
-    if (file.mimeType?.includes('video')) type = 'video';
-    else if (file.mimeType?.includes('image')) type = 'image';
-    else if (file.mimeType?.includes('audio')) type = 'audio';
-    else if (file.mimeType?.includes('pdf')) type = 'pdf';
-    else if (file.mimeType?.includes('zip') || file.mimeType?.includes('rar')) type = 'archive';
+    const name = (file.name || '').toLowerCase();
+    const mimeType = file.mimeType || '';
+    
+    if (mimeType.includes('video') || name.match(/\.(mp4|mkv|avi|mov|wmv|flv|webm)$/)) {
+      type = 'video';
+    } else if (mimeType.includes('image') || name.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/)) {
+      type = 'image';
+    } else if (mimeType.includes('audio') || name.match(/\.(mp3|wav|flac|aac|ogg)$/)) {
+      type = 'audio';
+    } else if (mimeType.includes('pdf') || name.endsWith('.pdf')) {
+      type = 'pdf';
+    } else if (mimeType.includes('zip') || mimeType.includes('rar') || name.match(/\.(zip|rar|7z|tar|gz)$/)) {
+      type = 'archive';
+    } else if (name.match(/\.(exe|msi|dmg|pkg|deb|rpm|iso)$/)) {
+      type = 'software';
+    }
 
     return {
       driveFileId: file.id,
-      title: file.name,
+      title: file.name.replace(/\.[^/.]+$/, ''), // Remove extension
       description: file.description || `${file.name} - ${formattedSize}`,
       category,
       type,
@@ -173,4 +221,8 @@ class GoogleDriveService {
   }
 }
 
-module.exports = new GoogleDriveService();
+// Export singleton instance
+const driveService = new GoogleDriveService();
+driveService.init();
+
+module.exports = driveService;
