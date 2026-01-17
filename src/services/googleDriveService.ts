@@ -22,21 +22,22 @@ export interface DriveFolder {
 }
 
 export const googleDriveService = {
+  /**
+   * Get the backend URL
+   * In development: empty string (Vite proxy handles /api)
+   * In production: VITE_VPS_BACKEND_URL value
+   */
   getBackendUrl(): string {
-    // Check for configured backend URL
     const configuredUrl = import.meta.env.VITE_VPS_BACKEND_URL || '';
-    if (configuredUrl) {
-      // Remove trailing slashes
-      return configuredUrl.replace(/\/+$/, '');
-    }
-    // Default to empty string (uses Vite proxy in dev)
-    return '';
+    return configuredUrl ? configuredUrl.replace(/\/+$/, '') : '';
   },
 
-  // Build API URL - handles both proxy and direct backend URL
+  /**
+   * Build full API URL
+   * Handles both proxy mode (dev) and direct URL (production)
+   */
   buildApiUrl(path: string): string {
     const backendUrl = this.getBackendUrl();
-    // Ensure path starts with /
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     return `${backendUrl}${normalizedPath}`;
   },
