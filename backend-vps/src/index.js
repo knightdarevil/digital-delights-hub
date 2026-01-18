@@ -72,19 +72,28 @@ app.get('/health', (req, res) => {
 
 // API Routes
 const driveRoutes = require('./routes/drive');
+const licenseRoutes = require('./routes/license');
+
 app.use('/api/drive', driveRoutes);
+app.use('/api/license', licenseRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    name: 'Google Drive Sync Backend',
+    name: 'Backend API Server',
     version: '1.0.0',
     endpoints: {
       health: '/health',
+      // Drive endpoints
       listFolder: '/api/drive/list-folder/:folderId',
       listCategory: '/api/drive/list/:category',
       getFile: '/api/drive/file/:fileId',
-      download: '/api/drive/download/:fileId (auth required)'
+      download: '/api/drive/download/:fileId (auth required)',
+      // License endpoints
+      licenseVerify: 'POST /api/license/verify',
+      licenseActivate: 'POST /api/license/activate',
+      licenseCheck: 'POST /api/license/check',
+      licenseDeactivate: 'POST /api/license/deactivate'
     }
   });
 });
