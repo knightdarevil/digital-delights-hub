@@ -6,8 +6,9 @@ import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { AdminStats } from "@/components/admin/AdminStats";
 import { AdminUsers } from "@/components/admin/AdminUsers";
 import { AdminContent } from "@/components/admin/AdminContent";
+import { AdminKeys } from "@/components/admin/AdminKeys";
 
-type AdminTab = "stats" | "users" | "content";
+type AdminTab = "stats" | "users" | "content" | "keys";
 
 const Admin = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>("stats");
@@ -47,6 +48,7 @@ const Admin = () => {
               {activeTab === "stats" && <AdminStats />}
               {activeTab === "users" && <AdminUsers />}
               {activeTab === "content" && <AdminContent />}
+              {activeTab === "keys" && <AdminKeys />}
             </div>
           </div>
         </div>
