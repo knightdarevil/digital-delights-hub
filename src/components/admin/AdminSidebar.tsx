@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
-import { BarChart3, Users, FileText } from "lucide-react";
+import { BarChart3, Users, FileText, Key } from "lucide-react";
 
-type AdminTab = "stats" | "users" | "content";
+type AdminTab = "stats" | "users" | "content" | "keys";
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -13,6 +13,7 @@ export const AdminSidebar = ({ activeTab, onTabChange }: AdminSidebarProps) => {
     { id: "stats" as AdminTab, label: "Statistics", icon: BarChart3 },
     { id: "users" as AdminTab, label: "Users", icon: Users },
     { id: "content" as AdminTab, label: "Content", icon: FileText },
+    { id: "keys" as AdminTab, label: "License Keys", icon: Key },
   ];
 
   return (
