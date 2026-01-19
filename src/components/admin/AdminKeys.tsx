@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Key, Plus, Trash2, Copy, Search, Ban } from "lucide-react";
+import { Key, Plus, Trash2, Copy, Search, Ban, Eye, Monitor, Smartphone, X, Edit2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -30,7 +30,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { keyService } from "@/services/keyService";
-import { LicenseKey, KeyType, KEY_TYPE_LABELS, KEY_STATUS_LABELS } from "@/types/licenseKey";
+import { LicenseKey, KeyType, KEY_TYPE_LABELS, KEY_STATUS_LABELS, DeviceInfo } from "@/types/licenseKey";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export const AdminKeys = () => {
   const [keys, setKeys] = useState<LicenseKey[]>([]);
@@ -41,7 +42,17 @@ export const AdminKeys = () => {
   const [createCount, setCreateCount] = useState(1);
   const [createKeyType, setCreateKeyType] = useState<KeyType>("vip_7");
   const [createNote, setCreateNote] = useState("");
+  const [createMaxDevices, setCreateMaxDevices] = useState(1);
   const [creating, setCreating] = useState(false);
+  
+  // Detail dialog state
+  const [selectedKey, setSelectedKey] = useState<LicenseKey | null>(null);
+  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
+  
+  // Edit max devices dialog
+  const [isEditDevicesDialogOpen, setIsEditDevicesDialogOpen] = useState(false);
+  const [editMaxDevices, setEditMaxDevices] = useState(1);
+  
   const { toast } = useToast();
 
   useEffect(() => {
@@ -67,7 +78,7 @@ export const AdminKeys = () => {
   const handleCreateKeys = async () => {
     setCreating(true);
     try {
-      await keyService.createMultipleKeys(createKeyType, createCount, createNote || undefined);
+      await keyService.createMultipleKeys(createKeyType, createCount, createNote || undefined, createMaxDevices);
       toast({
         title: "Success",
         description: `Created ${createCount} key(s) successfully`,
@@ -75,6 +86,7 @@ export const AdminKeys = () => {
       setIsCreateDialogOpen(false);
       setCreateCount(1);
       setCreateNote("");
+      setCreateMaxDevices(1);
       fetchKeys();
     } catch (error) {
       toast({
@@ -120,10 +132,61 @@ export const AdminKeys = () => {
         description: "Key has been deleted",
       });
       fetchKeys();
+      setIsDetailDialogOpen(false);
     } catch (error) {
       toast({
         title: "Error",
         description: "Failed to delete key",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleViewDetails = (key: LicenseKey) => {
+    setSelectedKey(key);
+    setIsDetailDialogOpen(true);
+  };
+
+  const handleEditMaxDevices = (key: LicenseKey) => {
+    setSelectedKey(key);
+    setEditMaxDevices(key.maxDevices);
+    setIsEditDevicesDialogOpen(true);
+  };
+
+  const handleSaveMaxDevices = async () => {
+    if (!selectedKey) return;
+    try {
+      await keyService.updateMaxDevices(selectedKey.id, editMaxDevices);
+      toast({
+        title: "Updated",
+        description: "Device limit updated successfully",
+      });
+      setIsEditDevicesDialogOpen(false);
+      fetchKeys();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update device limit",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRemoveDevice = async (keyId: string, deviceId: string) => {
+    try {
+      await keyService.removeDevice(keyId, deviceId);
+      toast({
+        title: "Removed",
+        description: "Device removed successfully",
+      });
+      // Refresh key details
+      const updatedKey = await keyService.getKeyById(keyId);
+      if (updatedKey) setSelectedKey(updatedKey);
+      fetchKeys();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to remove device",
         variant: "destructive",
       });
     }
@@ -137,6 +200,20 @@ export const AdminKeys = () => {
       revoked: "destructive",
     };
     return <Badge variant={variants[status] || "outline"}>{KEY_STATUS_LABELS[status as keyof typeof KEY_STATUS_LABELS]}</Badge>;
+  };
+
+  const getPlatformIcon = (platform?: string) => {
+    switch (platform?.toLowerCase()) {
+      case 'windows':
+      case 'mac':
+      case 'linux':
+        return <Monitor className="w-4 h-4" />;
+      case 'android':
+      case 'ios':
+        return <Smartphone className="w-4 h-4" />;
+      default:
+        return <Monitor className="w-4 h-4" />;
+    }
   };
 
   const filteredKeys = keys.filter((key) => {
@@ -224,7 +301,7 @@ export const AdminKeys = () => {
               <TableHead>Key</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Used By</TableHead>
+              <TableHead>Devices</TableHead>
               <TableHead>Note</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -239,7 +316,7 @@ export const AdminKeys = () => {
               </TableRow>
             ) : (
               filteredKeys.map((key) => (
-                <TableRow key={key.id}>
+                <TableRow key={key.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleViewDetails(key)}>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Key className="w-4 h-4 text-muted-foreground" />
@@ -250,7 +327,10 @@ export const AdminKeys = () => {
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6"
-                        onClick={() => handleCopyKey(key.key)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCopyKey(key.key);
+                        }}
                       >
                         <Copy className="w-3 h-3" />
                       </Button>
@@ -261,7 +341,12 @@ export const AdminKeys = () => {
                   </TableCell>
                   <TableCell>{getStatusBadge(key.status)}</TableCell>
                   <TableCell>
-                    {key.usedByEmail || <span className="text-muted-foreground">-</span>}
+                    <div className="flex items-center gap-1">
+                      <Monitor className="w-4 h-4 text-muted-foreground" />
+                      <span className={key.devices.length >= key.maxDevices ? "text-orange-500" : ""}>
+                        {key.devices.length}/{key.maxDevices}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <span className="text-sm text-muted-foreground truncate max-w-[150px] block">
@@ -272,7 +357,25 @@ export const AdminKeys = () => {
                     {key.createdAt.toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
+                    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleViewDetails(key)}
+                        title="View Details"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleEditMaxDevices(key)}
+                        title="Edit Device Limit"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
                       {key.status === 'active' && (
                         <Button
                           variant="ghost"
@@ -326,6 +429,17 @@ export const AdminKeys = () => {
               </Select>
             </div>
             <div className="space-y-2">
+              <Label>Max Devices (Số thiết bị tối đa)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={10}
+                value={createMaxDevices}
+                onChange={(e) => setCreateMaxDevices(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+              />
+              <p className="text-xs text-muted-foreground">Số lượng thiết bị có thể sử dụng key này cùng lúc</p>
+            </div>
+            <div className="space-y-2">
               <Label>Number of Keys</Label>
               <Input
                 type="number"
@@ -350,6 +464,162 @@ export const AdminKeys = () => {
             </Button>
             <Button onClick={handleCreateKeys} disabled={creating}>
               {creating ? "Creating..." : `Create ${createCount} Key(s)`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Key Detail Dialog */}
+      <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Key className="w-5 h-5" />
+              Key Details
+            </DialogTitle>
+          </DialogHeader>
+          {selectedKey && (
+            <div className="space-y-6">
+              {/* Key Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-muted-foreground">Key Code</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="bg-muted px-3 py-2 rounded font-mono text-lg">
+                      {selectedKey.key}
+                    </code>
+                    <Button variant="ghost" size="icon" onClick={() => handleCopyKey(selectedKey.key)}>
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Status</Label>
+                  <div className="mt-1">{getStatusBadge(selectedKey.status)}</div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Type</Label>
+                  <div className="mt-1">
+                    <Badge variant="outline">{KEY_TYPE_LABELS[selectedKey.keyType]}</Badge>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Device Limit</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={selectedKey.devices.length >= selectedKey.maxDevices ? "text-orange-500 font-medium" : ""}>
+                      {selectedKey.devices.length} / {selectedKey.maxDevices}
+                    </span>
+                    <Button variant="ghost" size="sm" onClick={() => handleEditMaxDevices(selectedKey)}>
+                      <Edit2 className="w-3 h-3 mr-1" /> Edit
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Created</Label>
+                  <p className="mt-1">{selectedKey.createdAt.toLocaleString()}</p>
+                </div>
+                {selectedKey.usedAt && (
+                  <div>
+                    <Label className="text-muted-foreground">First Used</Label>
+                    <p className="mt-1">{selectedKey.usedAt.toLocaleString()}</p>
+                  </div>
+                )}
+                {selectedKey.note && (
+                  <div className="col-span-2">
+                    <Label className="text-muted-foreground">Note</Label>
+                    <p className="mt-1 text-sm">{selectedKey.note}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Devices List */}
+              <div>
+                <Label className="text-muted-foreground mb-2 block">Active Devices</Label>
+                {selectedKey.devices.length === 0 ? (
+                  <div className="text-center py-6 text-muted-foreground bg-muted/50 rounded-lg">
+                    No devices activated yet
+                  </div>
+                ) : (
+                  <ScrollArea className="h-[200px]">
+                    <div className="space-y-2">
+                      {selectedKey.devices.map((device, index) => (
+                        <div
+                          key={device.deviceId || index}
+                          className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
+                        >
+                          <div className="flex items-center gap-3">
+                            {getPlatformIcon(device.platform)}
+                            <div>
+                              <p className="font-medium">{device.deviceName}</p>
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Badge variant="outline" className="text-xs">
+                                  {device.softwareName}
+                                </Badge>
+                                <span>•</span>
+                                <span>{device.platform || 'unknown'}</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Activated: {device.activatedAt.toLocaleString()} | 
+                                Last seen: {device.lastSeenAt.toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => handleRemoveDevice(selectedKey.id, device.deviceId)}
+                            title="Remove Device"
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDetailDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Max Devices Dialog */}
+      <Dialog open={isEditDevicesDialogOpen} onOpenChange={setIsEditDevicesDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Device Limit</DialogTitle>
+            <DialogDescription>
+              Change the maximum number of devices that can use this key simultaneously
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label>Max Devices</Label>
+            <Input
+              type="number"
+              min={1}
+              max={10}
+              value={editMaxDevices}
+              onChange={(e) => setEditMaxDevices(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+              className="mt-2"
+            />
+            {selectedKey && selectedKey.devices.length > editMaxDevices && (
+              <p className="text-sm text-orange-500 mt-2">
+                Warning: Current device count ({selectedKey.devices.length}) exceeds new limit
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditDevicesDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveMaxDevices}>
+              Save
             </Button>
           </DialogFooter>
         </DialogContent>
