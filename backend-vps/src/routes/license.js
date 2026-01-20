@@ -33,6 +33,18 @@ const getVIPExpiration = (keyType) => {
   }
 };
 
+// Helper to calculate actual expiration based on activation date
+const calculateActualExpiration = (keyType, activatedAt) => {
+  if (keyType === 'vip_lifetime') return null;
+  
+  const activationDate = activatedAt instanceof Date ? activatedAt : activatedAt.toDate();
+  const daysToAdd = keyType === 'vip_7' ? 7 : keyType === 'vip_30' ? 30 : 0;
+  
+  if (daysToAdd === 0) return null;
+  
+  return new Date(activationDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+};
+
 // ============ PUBLIC ENDPOINTS ============
 
 /**
@@ -77,19 +89,18 @@ router.post('/verify', async (req, res) => {
     const keyDoc = snapshot.docs[0];
     const keyData = keyDoc.data();
 
-    // Check if key is active
-    if (keyData.status !== 'active') {
+    // Check if key is revoked
+    if (keyData.status === 'revoked') {
       return res.json({ 
         success: true, 
         valid: false,
-        status: keyData.status,
-        error: `Key is ${keyData.status}` 
+        status: 'revoked',
+        error: 'Key has been revoked' 
       });
     }
 
-    // Check if key has expired (before activation)
-    if (keyData.expiresAt && keyData.expiresAt.toDate() < new Date()) {
-      // Update key status to expired
+    // Check if key has expired (before first activation)
+    if (keyData.status === 'active' && keyData.expiresAt && keyData.expiresAt.toDate() < new Date()) {
       await keyDoc.ref.update({ status: 'expired' });
       return res.json({ 
         success: true, 
@@ -99,11 +110,19 @@ router.post('/verify', async (req, res) => {
       });
     }
 
+    // Check device slots available
+    const devices = keyData.devices || [];
+    const maxDevices = keyData.maxDevices || 1;
+    const availableSlots = maxDevices - devices.length;
+
     res.json({
       success: true,
       valid: true,
       keyType: keyData.keyType,
-      status: keyData.status
+      status: keyData.status,
+      maxDevices,
+      currentDevices: devices.length,
+      availableSlots
     });
 
   } catch (error) {
@@ -117,11 +136,13 @@ router.post('/verify', async (req, res) => {
 
 /**
  * POST /api/license/activate
- * Activate a license key for a device/user
+ * Activate a license key for a device
  * Body: { 
  *   key: "XXXX-XXXX-XXXX-XXXX",
  *   deviceId: "unique-device-identifier",
- *   deviceName: "Windows PC" (optional),
+ *   deviceName: "My Windows PC" (optional),
+ *   softwareName: "MyApp Pro" (optional),
+ *   platform: "windows" | "mac" | "android" | "ios" | "linux" (optional),
  *   email: "user@email.com" (optional)
  * }
  */
@@ -134,7 +155,7 @@ router.post('/activate', async (req, res) => {
       });
     }
 
-    const { key, deviceId, deviceName, email } = req.body;
+    const { key, deviceId, deviceName, softwareName, platform, email } = req.body;
 
     if (!key || !deviceId) {
       return res.status(400).json({ 
@@ -161,43 +182,112 @@ router.post('/activate', async (req, res) => {
     const keyDoc = snapshot.docs[0];
     const keyData = keyDoc.data();
 
-    // Check if key is active
-    if (keyData.status !== 'active') {
+    // Check if key is revoked
+    if (keyData.status === 'revoked') {
       return res.json({ 
         success: false, 
-        error: `Key is already ${keyData.status}` 
+        error: 'Key has been revoked' 
       });
     }
 
     // Check if key has expired (before activation)
-    if (keyData.expiresAt && keyData.expiresAt.toDate() < new Date()) {
+    if (keyData.status === 'active' && keyData.expiresAt && keyData.expiresAt.toDate() < new Date()) {
       await keyDoc.ref.update({ status: 'expired' });
       return res.json({ 
         success: false, 
-        error: 'Key has expired' 
+        error: 'Key has expired before activation' 
       });
     }
 
-    // Calculate VIP expiration
-    const vipExpiresAt = getVIPExpiration(keyData.keyType);
+    // Get current devices
+    const devices = keyData.devices || [];
+    const maxDevices = keyData.maxDevices || 1;
+    const now = new Date();
 
-    // Activate the key
-    await keyDoc.ref.update({
+    // Check if device already exists
+    const existingDeviceIndex = devices.findIndex(d => d.deviceId === deviceId);
+
+    if (existingDeviceIndex !== -1) {
+      // Device already registered, update lastSeenAt and softwareName
+      devices[existingDeviceIndex] = {
+        ...devices[existingDeviceIndex],
+        deviceName: deviceName || devices[existingDeviceIndex].deviceName,
+        softwareName: softwareName || devices[existingDeviceIndex].softwareName,
+        platform: platform || devices[existingDeviceIndex].platform,
+        lastSeenAt: now
+      };
+
+      await keyDoc.ref.update({ devices });
+
+      // Calculate VIP expiration
+      const firstActivation = keyData.usedAt?.toDate() || now;
+      const vipExpiresAt = calculateActualExpiration(keyData.keyType, firstActivation);
+
+      return res.json({
+        success: true,
+        message: 'Device already registered, updated last seen',
+        keyType: keyData.keyType,
+        vipExpiresAt: vipExpiresAt ? vipExpiresAt.toISOString() : null,
+        isLifetime: keyData.keyType === 'vip_lifetime',
+        currentDevices: devices.length,
+        maxDevices
+      });
+    }
+
+    // Check if max devices reached
+    if (devices.length >= maxDevices) {
+      return res.json({ 
+        success: false, 
+        error: `Maximum devices limit reached (${maxDevices}). Please deactivate another device first.`,
+        currentDevices: devices.length,
+        maxDevices
+      });
+    }
+
+    // Add new device
+    const newDevice = {
+      deviceId,
+      deviceName: deviceName || 'Unknown Device',
+      softwareName: softwareName || 'Unknown Software',
+      platform: platform || 'unknown',
+      activatedAt: now,
+      lastSeenAt: now
+    };
+
+    devices.push(newDevice);
+
+    // Determine if this is first activation
+    const isFirstActivation = !keyData.usedAt;
+    
+    // Update the key
+    const updateData = {
       status: 'used',
-      usedBy: deviceId,
-      usedByEmail: email || null,
-      usedByDevice: deviceName || null,
-      usedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
+      devices,
+      usedByEmail: email || keyData.usedByEmail || null
+    };
 
-    console.log(`✅ License key activated: ${normalizedKey} for device: ${deviceId}`);
+    // Only set usedAt on first activation
+    if (isFirstActivation) {
+      updateData.usedAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+    await keyDoc.ref.update(updateData);
+
+    // Calculate VIP expiration
+    const activationDate = isFirstActivation ? now : keyData.usedAt.toDate();
+    const vipExpiresAt = calculateActualExpiration(keyData.keyType, activationDate);
+
+    console.log(`✅ License key activated: ${normalizedKey} for device: ${deviceId} (${deviceName || 'Unknown'})`);
 
     res.json({
       success: true,
       message: 'License activated successfully',
       keyType: keyData.keyType,
       vipExpiresAt: vipExpiresAt ? vipExpiresAt.toISOString() : null,
-      isLifetime: keyData.keyType === 'vip_lifetime'
+      isLifetime: keyData.keyType === 'vip_lifetime',
+      currentDevices: devices.length,
+      maxDevices,
+      device: newDevice
     });
 
   } catch (error) {
@@ -213,7 +303,8 @@ router.post('/activate', async (req, res) => {
  * POST /api/license/check
  * Check the status of an activated license for a device
  * Body: { 
- *   deviceId: "unique-device-identifier"
+ *   deviceId: "unique-device-identifier",
+ *   key: "XXXX-XXXX-XXXX-XXXX" (optional - if provided, updates lastSeenAt)
  * }
  */
 router.post('/check', async (req, res) => {
@@ -225,7 +316,7 @@ router.post('/check', async (req, res) => {
       });
     }
 
-    const { deviceId } = req.body;
+    const { deviceId, key } = req.body;
 
     if (!deviceId) {
       return res.status(400).json({ 
@@ -234,14 +325,50 @@ router.post('/check', async (req, res) => {
       });
     }
 
-    // Find any key used by this device
-    const snapshot = await db.collection('licenseKeys')
-      .where('usedBy', '==', deviceId)
-      .where('status', '==', 'used')
-      .limit(1)
-      .get();
+    let snapshot;
+    
+    // If key is provided, search by key; otherwise search by deviceId in devices array
+    if (key) {
+      const normalizedKey = key.toUpperCase().trim();
+      snapshot = await db.collection('licenseKeys')
+        .where('key', '==', normalizedKey)
+        .where('status', '==', 'used')
+        .limit(1)
+        .get();
+    } else {
+      // Search all used keys and filter by deviceId
+      snapshot = await db.collection('licenseKeys')
+        .where('status', '==', 'used')
+        .get();
+    }
 
     if (snapshot.empty) {
+      return res.json({ 
+        success: true, 
+        licensed: false,
+        message: 'No active license found' 
+      });
+    }
+
+    // Find the key that contains this device
+    let foundKeyDoc = null;
+    let foundKeyData = null;
+    let foundDeviceIndex = -1;
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const devices = data.devices || [];
+      const deviceIndex = devices.findIndex(d => d.deviceId === deviceId);
+      
+      if (deviceIndex !== -1) {
+        foundKeyDoc = doc;
+        foundKeyData = data;
+        foundDeviceIndex = deviceIndex;
+        break;
+      }
+    }
+
+    if (!foundKeyDoc || !foundKeyData) {
       return res.json({ 
         success: true, 
         licensed: false,
@@ -249,29 +376,46 @@ router.post('/check', async (req, res) => {
       });
     }
 
-    const keyDoc = snapshot.docs[0];
-    const keyData = keyDoc.data();
+    // Update lastSeenAt for this device
+    const devices = foundKeyData.devices || [];
+    const now = new Date();
+    
+    if (foundDeviceIndex !== -1) {
+      devices[foundDeviceIndex].lastSeenAt = now;
+      await foundKeyDoc.ref.update({ devices });
+    }
 
     // Calculate if VIP is still valid
-    const vipExpiresAt = keyData.usedAt ? getVIPExpiration(keyData.keyType) : null;
     let isExpired = false;
+    let vipExpiresAt = null;
 
-    if (keyData.keyType !== 'vip_lifetime' && keyData.usedAt) {
-      const usedDate = keyData.usedAt.toDate();
-      const expireDate = getVIPExpiration(keyData.keyType);
-      if (expireDate) {
-        const actualExpireDate = new Date(usedDate.getTime() + (expireDate.getTime() - new Date().getTime()));
-        isExpired = actualExpireDate < new Date();
+    if (foundKeyData.keyType !== 'vip_lifetime' && foundKeyData.usedAt) {
+      vipExpiresAt = calculateActualExpiration(foundKeyData.keyType, foundKeyData.usedAt);
+      if (vipExpiresAt) {
+        isExpired = vipExpiresAt < now;
       }
+    }
+
+    // Check if key is revoked
+    if (foundKeyData.status === 'revoked') {
+      return res.json({
+        success: true,
+        licensed: false,
+        message: 'License has been revoked'
+      });
     }
 
     res.json({
       success: true,
       licensed: true,
-      keyType: keyData.keyType,
+      keyType: foundKeyData.keyType,
       isExpired,
-      isLifetime: keyData.keyType === 'vip_lifetime',
-      activatedAt: keyData.usedAt?.toDate()?.toISOString() || null
+      isLifetime: foundKeyData.keyType === 'vip_lifetime',
+      vipExpiresAt: vipExpiresAt ? vipExpiresAt.toISOString() : null,
+      activatedAt: foundKeyData.usedAt?.toDate()?.toISOString() || null,
+      currentDevices: devices.length,
+      maxDevices: foundKeyData.maxDevices || 1,
+      device: devices[foundDeviceIndex]
     });
 
   } catch (error) {
@@ -285,7 +429,7 @@ router.post('/check', async (req, res) => {
 
 /**
  * POST /api/license/deactivate
- * Deactivate a license (for device reset/transfer)
+ * Deactivate a license for a specific device (remove device from list)
  * Body: { 
  *   key: "XXXX-XXXX-XXXX-XXXX",
  *   deviceId: "unique-device-identifier"
@@ -314,37 +458,114 @@ router.post('/deactivate', async (req, res) => {
     // Find the key
     const snapshot = await db.collection('licenseKeys')
       .where('key', '==', normalizedKey)
-      .where('usedBy', '==', deviceId)
       .limit(1)
       .get();
 
     if (snapshot.empty) {
       return res.json({ 
         success: false, 
-        error: 'No matching license found for this device' 
+        error: 'Invalid license key' 
       });
     }
 
     const keyDoc = snapshot.docs[0];
+    const keyData = keyDoc.data();
+    const devices = keyData.devices || [];
 
-    // Reactivate the key (allow reuse)
-    await keyDoc.ref.update({
-      status: 'active',
-      usedBy: null,
-      usedByEmail: null,
-      usedByDevice: null,
-      usedAt: null
-    });
+    // Find and remove the device
+    const deviceIndex = devices.findIndex(d => d.deviceId === deviceId);
+    
+    if (deviceIndex === -1) {
+      return res.json({ 
+        success: false, 
+        error: 'Device not found for this license' 
+      });
+    }
 
-    console.log(`🔄 License key deactivated: ${normalizedKey}`);
+    // Remove the device
+    devices.splice(deviceIndex, 1);
+
+    // Update the key - if no devices left, set status back to active
+    const updateData = { devices };
+    
+    if (devices.length === 0) {
+      updateData.status = 'active';
+      // Keep usedAt and usedByEmail for history
+    }
+
+    await keyDoc.ref.update(updateData);
+
+    console.log(`🔄 Device deactivated from license: ${normalizedKey}, device: ${deviceId}`);
 
     res.json({
       success: true,
-      message: 'License deactivated successfully'
+      message: 'Device deactivated successfully',
+      remainingDevices: devices.length,
+      maxDevices: keyData.maxDevices || 1,
+      keyStatus: devices.length === 0 ? 'active' : 'used'
     });
 
   } catch (error) {
     console.error('❌ License deactivate error:', error.message);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * POST /api/license/devices
+ * Get all devices for a specific license key
+ * Body: { 
+ *   key: "XXXX-XXXX-XXXX-XXXX"
+ * }
+ */
+router.post('/devices', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'License service not configured' 
+      });
+    }
+
+    const { key } = req.body;
+
+    if (!key) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'License key is required' 
+      });
+    }
+
+    const normalizedKey = key.toUpperCase().trim();
+    
+    const snapshot = await db.collection('licenseKeys')
+      .where('key', '==', normalizedKey)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return res.json({ 
+        success: false, 
+        error: 'Invalid license key' 
+      });
+    }
+
+    const keyData = snapshot.docs[0].data();
+    const devices = keyData.devices || [];
+
+    res.json({
+      success: true,
+      devices,
+      currentDevices: devices.length,
+      maxDevices: keyData.maxDevices || 1,
+      availableSlots: (keyData.maxDevices || 1) - devices.length
+    });
+
+  } catch (error) {
+    console.error('❌ License devices error:', error.message);
     res.status(500).json({ 
       success: false, 
       error: error.message 
