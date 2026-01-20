@@ -226,17 +226,24 @@ export const keyService = {
       }
     }
 
-    await updateDoc(docRef, {
+    // Only set usedAt on first activation (when key was 'active')
+    const updateData: any = {
       status: 'used',
       usedBy: userId,
       usedByEmail: userEmail,
-      usedAt: serverTimestamp(),
       devices: updatedDevices.map(d => ({
         ...d,
         activatedAt: Timestamp.fromDate(d.activatedAt),
         lastSeenAt: Timestamp.fromDate(d.lastSeenAt),
       })),
-    });
+    };
+    
+    // Only set usedAt if this is the first activation
+    if (key.status === 'active') {
+      updateData.usedAt = serverTimestamp();
+    }
+    
+    await updateDoc(docRef, updateData);
     
     return { success: true, message: 'Key activated successfully', keyType: key.keyType };
   },

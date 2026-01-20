@@ -433,11 +433,11 @@ export const AdminKeys = () => {
               <Input
                 type="number"
                 min={1}
-                max={10}
+                max={1000}
                 value={createMaxDevices}
-                onChange={(e) => setCreateMaxDevices(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+                onChange={(e) => setCreateMaxDevices(Math.min(1000, Math.max(1, parseInt(e.target.value) || 1)))}
               />
-              <p className="text-xs text-muted-foreground">Số lượng thiết bị có thể sử dụng key này cùng lúc</p>
+              <p className="text-xs text-muted-foreground">Số lượng thiết bị có thể sử dụng key này cùng lúc (tối đa 1000)</p>
             </div>
             <div className="space-y-2">
               <Label>Number of Keys</Label>
@@ -603,11 +603,12 @@ export const AdminKeys = () => {
             <Input
               type="number"
               min={1}
-              max={10}
+              max={1000}
               value={editMaxDevices}
-              onChange={(e) => setEditMaxDevices(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+              onChange={(e) => setEditMaxDevices(Math.min(1000, Math.max(1, parseInt(e.target.value) || 1)))}
               className="mt-2"
             />
+            <p className="text-xs text-muted-foreground mt-1">Tối đa 1000 thiết bị</p>
             {selectedKey && selectedKey.devices.length > editMaxDevices && (
               <p className="text-sm text-orange-500 mt-2">
                 Warning: Current device count ({selectedKey.devices.length}) exceeds new limit
