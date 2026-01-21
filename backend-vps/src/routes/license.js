@@ -1,22 +1,59 @@
 const express = require('express');
 const router = express.Router();
-const admin = require('firebase-admin');
 
-// Initialize Firebase Admin if not already done
-if (!admin.apps.length) {
-  // You need to set FIREBASE_SERVICE_ACCOUNT env variable with the service account JSON
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
-  
-  if (serviceAccount.project_id) {
+// NOTE: Make license routes resilient so the whole backend doesn't crash
+// if Firebase Admin isn't installed/configured on a given environment.
+let admin = null;
+try {
+  // eslint-disable-next-line global-require
+  admin = require('firebase-admin');
+} catch (e) {
+  console.warn('⚠️ firebase-admin is not installed - license routes will not work');
+}
+
+function parseServiceAccountFromEnv() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  const rawB64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+
+  if (!raw && !rawB64) return null;
+
+  try {
+    const jsonText = rawB64
+      ? Buffer.from(rawB64, 'base64').toString('utf8')
+      : raw;
+
+    // People often paste with surrounding quotes in .env; strip a single pair.
+    const trimmed = (jsonText || '').trim();
+    const unquoted =
+      (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))
+        ? trimmed.slice(1, -1)
+        : trimmed;
+
+    return JSON.parse(unquoted);
+  } catch (e) {
+    console.error(
+      '❌ Invalid JSON in FIREBASE_SERVICE_ACCOUNT / FIREBASE_SERVICE_ACCOUNT_BASE64:',
+      e.message
+    );
+    return null;
+  }
+}
+
+// Initialize Firebase Admin if available
+if (admin && !admin.apps.length) {
+  const serviceAccount = parseServiceAccountFromEnv();
+
+  if (serviceAccount?.project_id) {
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+      credential: admin.credential.cert(serviceAccount),
     });
   } else {
     console.warn('⚠️ Firebase Admin not configured - license routes will not work');
   }
 }
 
-const db = admin.apps.length ? admin.firestore() : null;
+const db = admin?.apps?.length ? admin.firestore() : null;
 
 // Helper to get VIP expiration date based on key type
 const getVIPExpiration = (keyType) => {
